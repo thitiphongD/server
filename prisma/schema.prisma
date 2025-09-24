@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String         @id @default(cuid())
+  email            String         @unique
+  name             String?
+  password         String
+  role             String         @default("user") // "admin" or "user"
+  socketId         String?
+  isOnline         Boolean        @default(false)
+  notifications    Notification[] @relation("NotificationRecipient")
+  sentNotifications Notification[] @relation("NotificationSender")
+  createdCronJobs  CronJob[]      @relation("CronJobCreator")
+  createdAt        DateTime       @default(now())
+}
+
+model Notification {
+  id           String    @id @default(cuid())
+  userId       String    // recipient
+  user         User      @relation("NotificationRecipient", fields: [userId], references: [id])
+  senderId     String?   // null = system notification, not null = user-to-user
+  sender       User?     @relation("NotificationSender", fields: [senderId], references: [id])
+  title        String
+  message      String
+  type         String    // 'info', 'warning', 'success', 'error'
+  category     String    // 'system', 'user-to-user'
+  isRead       Boolean   @default(false)
+  isSent       Boolean   @default(false)
+  scheduledAt  DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model CronJob {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  cronExpression String  // e.g., "0 9 * * *" for daily at 9AM
+  isActive    Boolean   @default(true)
+  jobType     String    // 'notification_check', 'daily_summary', 'custom'
+  jobData     String?   // JSON string for job parameters
+  createdBy   String?   // admin user who created this job
+  creator     User?     @relation("CronJobCreator", fields: [createdBy], references: [id])
+  lastRun     DateTime?
+  nextRun     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
