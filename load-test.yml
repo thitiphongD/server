@@ -1,0 +1,183 @@
+config:
+  target: 'http://localhost:3001'
+  phases:
+    # Warm up phase
+    - duration: 30
+      arrivalRate: 2
+      name: "Warm up"
+    # Normal load
+    - duration: 60
+      arrivalRate: 10
+      name: "Normal load"
+    # Peak load
+    - duration: 60
+      arrivalRate: 25
+      name: "Peak load"
+    # Stress test
+    - duration: 30
+      arrivalRate: 50
+      name: "Stress test"
+
+  # Global settings
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+  # Variables for test data
+  variables:
+    userIds:
+      - "user1"
+      - "user2"
+      - "user3"
+    notificationTypes:
+      - "info"
+      - "warning"
+      - "success"
+      - "error"
+    cronExpressions:
+      - "*/5 * * * *"
+      - "0 * * * *"
+      - "0 9 * * *"
+      - "*/15 * * * *"
+
+scenarios:
+  # Health check - สำคัญสำหรับ baseline
+  - name: "Health Check"
+    weight: 10
+    flow:
+      - get:
+          url: "/"
+      - think: 1
+
+  # Get all cronjobs - การใช้งานหลัก
+  - name: "Get CronJobs"
+    weight: 25
+    flow:
+      - get:
+          url: "/api/cronjobs"
+          expect:
+            - statusCode: 200
+      - think: 2
+
+  # Create notification - ใช้งานบ่อย
+  - name: "Create System Notification"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/notifications"
+          json:
+            title: "Load Test Notification {{ $randomInt(1, 1000) }}"
+            message: "This is automated load test message at {{ $timestamp }}"
+            type: "{{ $randomString(notificationTypes) }}"
+            category: "system"
+          expect:
+            - statusCode: 201
+      - think: 1
+
+  # Create user notification
+  - name: "Create User Notification"
+    weight: 15
+    flow:
+      - post:
+          url: "/api/notifications"
+          json:
+            userId: "{{ $randomString(userIds) }}"
+            senderId: "{{ $randomString(userIds) }}"
+            title: "User Message {{ $randomInt(1, 100) }}"
+            message: "Load test user-to-user message {{ $timestamp }}"
+            type: "{{ $randomString(notificationTypes) }}"
+            category: "user-to-user"
+          expect:
+            - statusCode: 201
+      - think: 1
+
+  # Get user notifications
+  - name: "Get User Notifications"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/notifications/{{ $randomString(userIds) }}"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  # Create cronjob - Admin operation
+  - name: "Create CronJob"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/cronjobs"
+          json:
+            name: "LoadTest Job {{ $randomInt(1, 1000) }}"
+            description: "Automated load test cronjob created at {{ $timestamp }}"
+            cronExpression: "{{ $randomString(cronExpressions) }}"
+            jobType: "notification_check"
+            jobData: '{"title":"Auto Test","message":"Load test notification","type":"info"}'
+            isActive: true
+          expect:
+            - statusCode: 201
+          capture:
+            json: "$.cronJob.id"
+            as: "cronJobId"
+      - think: 2
+      # Test start/stop operations
+      - post:
+          url: "/api/cronjobs/{{ cronJobId }}/stop"
+          expect:
+            - statusCode: 200
+      - think: 1
+      - post:
+          url: "/api/cronjobs/{{ cronJobId }}/start"
+          expect:
+            - statusCode: 200
+      - think: 1
+      # Clean up - delete the test job
+      - delete:
+          url: "/api/cronjobs/{{ cronJobId }}"
+          expect:
+            - statusCode: 200
+
+  # Mark notifications as read
+  - name: "Mark All Notifications Read"
+    weight: 5
+    flow:
+      - post:
+          url: "/api/notifications/mark-all-read/{{ $randomString(userIds) }}"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+# WebSocket testing (separate scenario)
+websocket:
+  - name: "WebSocket Connection Test"
+    weight: 5
+    flow:
+      - ws:
+          url: "ws://localhost:3001/ws"
+          subprotocols: []
+          send:
+            - json:
+                type: "register"
+                userId: "loadtest_{{ $randomInt(1, 100) }}"
+          expect:
+            - json:
+                type: "connection"
+      - think: 5
+      - ws:
+          send:
+            - json:
+                type: "markAsRead"
+                notificationId: "test-notification-id"
+      - think: 2
+
+# Performance thresholds
+expect:
+  thresholds:
+    - http.response_time.p95: 500  # 95% ของ requests ต้องเสร็จภายใน 500ms
+    - http.response_time.p99: 1000 # 99% ของ requests ต้องเสร็จภายใน 1s
+    - http.codes.200: 95           # อย่างน้อย 95% ต้อง success
+    - http.codes.201: 5            # Creation requests
+
+# Plugins for better reporting
+plugins:
+  - artillery-plugin-expect

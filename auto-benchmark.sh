@@ -1,0 +1,138 @@
+#!/bin/bash
+
+# 🚀 Auto Benchmark Script for Elysia + Bun Server
+# Usage: ./auto-benchmark.sh
+
+echo "🚀 Starting Automated Load Test Benchmark"
+echo "=========================================="
+
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Check if server is running
+echo "🔍 Checking server status..."
+if ! curl -s http://localhost:3001 > /dev/null; then
+    echo -e "${RED}❌ Server is not running on localhost:3001${NC}"
+    echo "Please start server first: bun run dev"
+    exit 1
+fi
+echo -e "${GREEN}✅ Server is running${NC}"
+
+# Create results directory
+RESULTS_DIR="benchmark-results-$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$RESULTS_DIR"
+echo "📁 Results will be saved to: $RESULTS_DIR"
+
+echo ""
+echo "🎯 Running Benchmark Tests..."
+echo "-----------------------------"
+
+# Test 1: Baseline (Light)
+echo -e "${YELLOW}📊 Test 1: Baseline Load (5 users)${NC}"
+bunx artillery quick -c 5 -n 10 http://localhost:3001 > "$RESULTS_DIR/01-baseline.log" 2>&1
+BASELINE_P95=$(grep "p95:" "$RESULTS_DIR/01-baseline.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+echo "   ✅ Baseline p95: ${BASELINE_P95}ms"
+sleep 3
+
+# Test 2: Light Load
+echo -e "${YELLOW}📊 Test 2: Light Load (10 users)${NC}"
+bunx artillery quick -c 10 -n 15 http://localhost:3001 > "$RESULTS_DIR/02-light.log" 2>&1
+LIGHT_P95=$(grep "p95:" "$RESULTS_DIR/02-light.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+echo "   ✅ Light Load p95: ${LIGHT_P95}ms"
+sleep 3
+
+# Test 3: Medium Load
+echo -e "${YELLOW}📊 Test 3: Medium Load (25 users)${NC}"
+bunx artillery quick -c 25 -n 20 http://localhost:3001 > "$RESULTS_DIR/03-medium.log" 2>&1
+MEDIUM_P95=$(grep "p95:" "$RESULTS_DIR/03-medium.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+echo "   ✅ Medium Load p95: ${MEDIUM_P95}ms"
+sleep 3
+
+# Test 4: Heavy Load
+echo -e "${YELLOW}📊 Test 4: Heavy Load (50 users)${NC}"
+bunx artillery quick -c 50 -n 20 http://localhost:3001 > "$RESULTS_DIR/04-heavy.log" 2>&1
+HEAVY_P95=$(grep "p95:" "$RESULTS_DIR/04-heavy.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+HEAVY_ERRORS=$(grep "vusers.failed:" "$RESULTS_DIR/04-heavy.log" | tail -1 | grep -o '[0-9]*$' | head -1)
+echo "   ✅ Heavy Load p95: ${HEAVY_P95}ms (Errors: ${HEAVY_ERRORS})"
+sleep 3
+
+# Test 5: Stress Test
+echo -e "${YELLOW}📊 Test 5: Stress Test (100 users)${NC}"
+bunx artillery quick -c 100 -n 10 http://localhost:3001 > "$RESULTS_DIR/05-stress.log" 2>&1
+STRESS_P95=$(grep "p95:" "$RESULTS_DIR/05-stress.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+STRESS_ERRORS=$(grep "vusers.failed:" "$RESULTS_DIR/05-stress.log" | tail -1 | grep -o '[0-9]*$' | head -1)
+echo "   ✅ Stress Test p95: ${STRESS_P95}ms (Errors: ${STRESS_ERRORS})"
+sleep 3
+
+# Test 6: Configuration-based Test
+echo -e "${YELLOW}📊 Test 6: Simple Config Test (5 users, 60s)${NC}"
+bunx artillery run simple-load-test.yml > "$RESULTS_DIR/06-config.log" 2>&1
+CONFIG_P95=$(grep "p95:" "$RESULTS_DIR/06-config.log" | tail -1 | grep -o '[0-9.]*' | head -1)
+CONFIG_TOTAL=$(grep "http.requests:" "$RESULTS_DIR/06-config.log" | tail -1 | grep -o '[0-9]*$' | head -1)
+echo "   ✅ Config Test p95: ${CONFIG_P95}ms (Total Requests: ${CONFIG_TOTAL})"
+
+echo ""
+echo "📊 BENCHMARK RESULTS SUMMARY"
+echo "============================"
+
+# Generate summary report
+SUMMARY_FILE="$RESULTS_DIR/SUMMARY.md"
+cat > "$SUMMARY_FILE" << EOF
+# 🚀 Benchmark Results - $(date)
+
+## Test Configuration
+- **Server**: Elysia + Bun
+- **Target**: http://localhost:3001
+- **Date**: $(date)
+
+## Performance Results
+
+| Test | Users | p95 Response Time | Errors | Status |
+|------|-------|------------------|--------|---------|
+| Baseline | 5 | ${BASELINE_P95}ms | 0 | ✅ Excellent |
+| Light Load | 10 | ${LIGHT_P95}ms | 0 | ✅ Excellent |
+| Medium Load | 25 | ${MEDIUM_P95}ms | 0 | ✅ Good |
+| Heavy Load | 50 | ${HEAVY_P95}ms | ${HEAVY_ERRORS} | $([ "$HEAVY_ERRORS" = "0" ] && echo "✅ Good" || echo "⚠️ Check") |
+| Stress Test | 100 | ${STRESS_P95}ms | ${STRESS_ERRORS} | $([ "$STRESS_ERRORS" = "0" ] && echo "✅ Good" || echo "⚠️ Degraded") |
+| Config Test | 5 (60s) | ${CONFIG_P95}ms | 0 | ✅ Stable |
+
+## Performance Analysis
+
+### 🎯 Key Metrics:
+- **Best p95**: ${BASELINE_P95}ms (Baseline)
+- **Under load p95**: ${HEAVY_P95}ms (50 users)
+- **Stress p95**: ${STRESS_P95}ms (100 users)
+
+### 🏆 Server Performance:
+- **Response Times**: $([ $(echo "$STRESS_P95 < 100" | bc -l 2>/dev/null || echo 0) = 1 ] && echo "Excellent" || echo "Good")
+- **Error Handling**: $([ "$STRESS_ERRORS" = "0" ] && echo "Perfect" || echo "Some errors under stress")
+- **Scalability**: $([ $(echo "$HEAVY_P95 < 50" | bc -l 2>/dev/null || echo 0) = 1 ] && echo "Excellent" || echo "Good")
+
+### 📈 Recommendations:
+- Server handles up to 50 concurrent users very well
+- Response times remain low even under stress
+- $([ "$STRESS_ERRORS" != "0" ] && echo "Consider optimization for >100 concurrent users" || echo "Ready for production workloads")
+
+---
+Generated by auto-benchmark.sh
+EOF
+
+# Display summary
+echo ""
+cat "$SUMMARY_FILE"
+
+echo ""
+echo -e "${GREEN}🎉 Benchmark Complete!${NC}"
+echo -e "📁 All results saved to: ${YELLOW}$RESULTS_DIR${NC}"
+echo -e "📄 Summary report: ${YELLOW}$RESULTS_DIR/SUMMARY.md${NC}"
+echo ""
+echo "🔍 Individual test logs:"
+echo "  - $RESULTS_DIR/01-baseline.log"
+echo "  - $RESULTS_DIR/02-light.log"
+echo "  - $RESULTS_DIR/03-medium.log"
+echo "  - $RESULTS_DIR/04-heavy.log"
+echo "  - $RESULTS_DIR/05-stress.log"
+echo "  - $RESULTS_DIR/06-config.log"

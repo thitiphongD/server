@@ -1,0 +1,36 @@
+config:
+  target: 'http://localhost:3001'
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Light load test"
+
+scenarios:
+  - name: "Health Check"
+    weight: 30
+    flow:
+      - get:
+          url: "/"
+
+  - name: "Get CronJobs"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/cronjobs"
+
+  - name: "Create System Notification"
+    weight: 25
+    flow:
+      - post:
+          url: "/api/notifications"
+          json:
+            title: "Test Notification"
+            message: "Simple load test message"
+            type: "info"
+            category: "system"
+
+  - name: "Get User Notifications"
+    weight: 15
+    flow:
+      - get:
+          url: "/api/notifications/user1"
